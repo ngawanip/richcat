@@ -125,12 +125,10 @@ def calculate_stock_statistics(prices):
 def get_cheapest_pair(available_pairs):
     """Fetches all tickers at once and returns the pair with the absolute lowest price."""
     try:
-        # Calling get_ticker without a pair fetches ALL market prices in ONE api call
         all_tickers = get_ticker() 
         cheapest_pair = None
         min_price = float('inf')
         
-        # Roostoo usually returns a list of dictionaries for all tickers
         if isinstance(all_tickers, list):
             for ticker in all_tickers:
                 symbol = ticker.get('symbol', '')
@@ -158,6 +156,8 @@ def execute_strategy():
         print("No pairs found. Skipping this cycle.")
         return False
         
+    print(f"Found {len(pairs)} trading pairs on the exchange. Evaluating risk data...")
+    
     lowest_risk_pair = None
     min_std_dev = float('inf')
     is_fallback = False
@@ -165,11 +165,23 @@ def execute_strategy():
     # 1. Primary Strategy: Find lowest risk pair
     for pair in pairs:
         historical_prices = get_historical_prices(pair)
-        _, std_dev = calculate_stock_statistics(historical_prices)
+        
+        # DEBUG PRINT: Show what data is being pulled for each pair
+        if not historical_prices:
+            print(f"  [DEBUG] {pair}: No historical data found.")
+            continue
+            
+        mean_price, std_dev = calculate_stock_statistics(historical_prices)
+        
         if std_dev is not None:
+            # DEBUG PRINT: Show the calculated math
+            print(f"  [DEBUG] {pair} | Data Points: {len(historical_prices)} | Mean Price: ${mean_price:.4f} | Risk (StdDev): {std_dev:.4f}")
+            
             if std_dev <= 2.0 and std_dev < min_std_dev:
                 min_std_dev = std_dev
                 lowest_risk_pair = pair
+                
+    print("-" * 40) # Visual separator
                 
     # 2. Fallback Condition: Find the cheapest stock
     if not lowest_risk_pair:
@@ -183,7 +195,7 @@ def execute_strategy():
         print(f"=> Fallback Strategy: Selected Cheapest Pair: {lowest_risk_pair} at ${fallback_price:.4f}")
         is_fallback = True
     else:
-        print(f"=> Selected Pair: {lowest_risk_pair} (StdDev: {min_std_dev:.2f} <= 2.0)")
+        print(f"=> TARGET ACQUIRED: Selected Pair: {lowest_risk_pair} (StdDev: {min_std_dev:.2f} <= 2.0)")
         
     # 3. Execution Logic
     try:
@@ -191,30 +203,27 @@ def execute_strategy():
         current_price = float(ticker_data.get('price', ticker_data.get('lastPrice', 0)))
         
         if current_price <= 0:
-            print("Failed to fetch a valid price. Skipping cycle.")
+            print(f"Failed to fetch a valid price for {lowest_risk_pair}. Skipping cycle.")
             return False
 
-        # If it's the primary strategy, we enforce the 1.25x rule.
-        # If it's a fallback, we bypass the 1.25x rule to ensure the bot actually buys the cheap stock.
         condition_met = False
         
         if not is_fallback:
             todays_low = get_todays_low(lowest_risk_pair)
             if todays_low is None:
-                print("Failed to fetch today's low. Skipping cycle.")
+                print(f"Failed to fetch today's low for {lowest_risk_pair}. Skipping cycle.")
                 return False
                 
             buy_threshold = todays_low * 1.25
-            print(f"Current Price: {current_price:.2f} | Today's Low: {todays_low:.2f} | Buy Threshold: {buy_threshold:.2f}")
+            print(f"  [EVALUATING TRADE] Pair: {lowest_risk_pair} | Current Price: ${current_price:.2f} | Today's Low: ${todays_low:.2f} | Buy Threshold (1.25x): ${buy_threshold:.2f}")
             
             if current_price >= buy_threshold:
-                print(f"Condition Met! Current price ({current_price:.2f}) is >= the 1.25x low threshold ({buy_threshold:.2f}).")
+                print(f"  >>> CONDITION MET! Current price (${current_price:.2f}) has crossed the 1.25x low threshold (${buy_threshold:.2f}).")
                 condition_met = True
             else:
-                print("Condition NOT met. Price has not surged 25% above today's low. Waiting for next cycle.")
+                print("  >>> CONDITION NOT MET. Price has not surged 25% above today's low. Waiting for next cycle.")
         else:
-            # Fallback automatically meets the buy condition
-            print("Fallback execution proceeding to buy...")
+            print(f"  [EVALUATING TRADE] Fallback execution proceeding to buy {lowest_risk_pair} at ${current_price:.4f}...")
             condition_met = True
             
         # 4. Buy Logic
@@ -240,13 +249,12 @@ def execute_strategy():
             investment_amount = available_usd * 0.05
             calculated_quantity = investment_amount / current_price
             
-            # Condition 2: Maximum trade amount is 1000 shares
             quantity_to_buy = min(calculated_quantity, 1000.0)
             
-            print(f"Allocating funds to buy {quantity_to_buy:.6f} {lowest_risk_pair} (Max 1000 shares limit applied)")
+            print(f"  >>> EXECUTING BUY: Allocating ${investment_amount:.2f} to buy {quantity_to_buy:.6f} shares of {lowest_risk_pair}")
             place_order(lowest_risk_pair, "BUY", quantity_to_buy, order_type="MARKET")
-            print("Order placement successful!")
-            return True # Trade was successfully made
+            print("Order placement command sent successfully!")
+            return True 
             
         return False
             
@@ -257,8 +265,6 @@ def execute_strategy():
 if __name__ == '__main__':
     print("Starting Continuous Quant Bot...")
     WAIT_TIME_SECONDS = 10
-    
-    # Condition 3: Maximum trade target is 10
     MAX_TRADES = 10
     trades_executed = 0
     
