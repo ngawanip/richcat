@@ -52,141 +52,116 @@ def get_balance():
     r = requests.get(BASE_URL + "/v3/balance", params=payload, headers=headers)
     return safe_json(r)
 
-def place_order(pair, side, quantity):
-    # Try multiple endpoint variations
-    endpoints = ["/v3/order", "/v3/orders"]
-    payload_variants = [
+def place_order_trial(pair, side, quantity):
+    """Try multiple endpoint and parameter combinations."""
+    # List of possible endpoints (relative to BASE_URL)
+    endpoints = [
+        "/v3/order",
+        "/v3/orders",
+        "/v3/order/place",
+        "/v3/trade",
+        "/v3/trade/place",
+        "/api/v3/order",
+        "/api/v3/orders",
+    ]
+    # Parameter sets (field names)
+    param_sets = [
         {"pair": pair, "side": side, "type": "MARKET", "quantity": quantity},
         {"symbol": pair, "side": side, "type": "MARKET", "quantity": quantity},
+        {"market": pair, "side": side, "type": "MARKET", "amount": quantity},
+        {"pair": pair, "side": side, "orderType": "MARKET", "quantity": quantity},
+        {"symbol": pair, "side": side, "orderType": "MARKET", "quantity": quantity},
     ]
+    # Also try with pair without slash (e.g., ZENUSD)
+    pair_no_slash = pair.replace('/', '')
+    param_sets_no_slash = [
+        {"pair": pair_no_slash, "side": side, "type": "MARKET", "quantity": quantity},
+        {"symbol": pair_no_slash, "side": side, "type": "MARKET", "quantity": quantity},
+    ]
+    all_param_sets = param_sets + param_sets_no_slash
+
     for endpoint in endpoints:
-        for payload in payload_variants:
-            # Add timestamp and signature
+        for params in all_param_sets:
+            # Add timestamp
+            payload = params.copy()
             payload["timestamp"] = int(time.time() * 1000)
             headers = {"RST-API-KEY": API_KEY, "MSG-SIGNATURE": generate_signature(payload)}
             url = BASE_URL + endpoint
-            print(f"Trying order: {url} with payload {payload}")
-            r = requests.post(url, data=payload, headers=headers)
-            print(f"  Status: {r.status_code} {r.text[:200]}")
-            if r.status_code == 200:
-                return safe_json(r)
-            # If 200, success
-            # If 404, try next
-            # If 400, maybe wrong format, but still try next
+            # Try POST with form-encoded data
+            try:
+                print(f"Trying: POST {url} with data {payload}")
+                r = requests.post(url, data=payload, headers=headers)
+                print(f"  Status: {r.status_code} {r.text[:200]}")
+                if r.status_code == 200:
+                    return safe_json(r)
+            except Exception as e:
+                print(f"  Exception: {e}")
+            # Also try POST with JSON body
+            try:
+                print(f"Trying: POST {url} with json {payload}")
+                r = requests.post(url, json=payload, headers=headers)
+                print(f"  Status: {r.status_code} {r.text[:200]}")
+                if r.status_code == 200:
+                    return safe_json(r)
+            except Exception as e:
+                print(f"  Exception: {e}")
     return None
 
-def get_available_pairs():
-    ex_info = get_ex_info()
-    if isinstance(ex_info, dict) and 'TradePairs' in ex_info:
-        pairs = list(ex_info['TradePairs'].keys())
-        print(f"Found {len(pairs)} trading pairs.")
-        return pairs
-    print("No TradePairs found in exchange info.")
-    return []
-
-def execute_trade(pair, shares=1):
-    ticker = get_ticker(pair)
-    if not ticker:
-        print(f"Cannot get ticker data for {pair}")
-        return False
-    price = ticker.get('LastPrice')
-    if price is None:
-        print(f"No price found in ticker data: {ticker}")
-        return False
-    price = float(price)
-
-    bal = get_balance()
-    usd_balance = 0.0
-    if isinstance(bal, dict):
-        if bal.get('Success'):
-            spot = bal.get('SpotWallet')
-            if spot and isinstance(spot, dict):
-                usd_data = spot.get('USD')
-                if usd_data:
-                    usd_balance = float(usd_data.get('Free', 0))
-        elif 'balances' in bal:
-            for asset in bal['balances']:
-                if asset.get('asset') == 'USD':
-                    usd_balance = float(asset.get('free', 0))
-                    break
-    elif isinstance(bal, list):
-        for asset in bal:
-            if asset.get('asset') == 'USD':
-                usd_balance = float(asset.get('free', 0))
-                break
-    else:
-        print(f"Unexpected balance format: {bal}")
-        return False
-
-    cost = shares * price
-    if usd_balance >= cost:
-        print(f"Buying {shares} share(s) of {pair} @ ${price:.4f} (cost ${cost:.2f})")
-        order_res = place_order(pair, "BUY", shares)
-        if order_res:
-            print("Trade successful")
-            return True
-        else:
-            print("Order failed")
-            return False
-    else:
-        print(f"Insufficient funds: need ${cost:.2f}, have ${usd_balance:.2f}")
-        max_shares = int(usd_balance // price)
-        if max_shares > 0:
-            print(f"Trying to buy {max_shares} share(s) instead.")
-            return execute_trade(pair, max_shares)
-        else:
-            return False
-
-def find_best_performer(pairs):
-    best_pair = None
-    best_change = -float('inf')
+def get_cheapest_pair(pairs):
+    cheapest = None
+    min_price = float('inf')
     for pair in pairs:
         ticker = get_ticker(pair)
         if not ticker:
             continue
-        change = ticker.get('Change')
-        if change is not None:
-            try:
-                change = float(change)
-                if change > best_change:
-                    best_change = change
-                    best_pair = pair
-                    print(f"New best: {pair} ({change*100:.2f}%)")
-            except:
-                pass
+        price = ticker.get('LastPrice')
+        if price is None:
+            continue
+        price = float(price)
+        if price < min_price:
+            min_price = price
+            cheapest = pair
+            print(f"New cheapest: {pair} @ ${price:.4f}")
         time.sleep(0.2)
-    return best_pair
+    return cheapest, min_price
 
 if __name__ == '__main__':
-    print("Starting bot – will buy 1 share within 1 minute")
+    print("Bot started – will buy 1 share of the cheapest pair immediately.")
 
-    pairs = get_available_pairs()
-    if not pairs:
-        print("No pairs. Exiting.")
+    # 1. Get all pairs
+    ex_info = get_ex_info()
+    if not ex_info or 'TradePairs' not in ex_info:
+        print("Could not get exchange info. Exiting.")
+        exit(1)
+    pairs = list(ex_info['TradePairs'].keys())
+    print(f"Found {len(pairs)} pairs.")
+
+    # 2. Find cheapest pair
+    cheapest, price = get_cheapest_pair(pairs)
+    if not cheapest:
+        print("Could not determine cheapest pair. Exiting.")
+        exit(1)
+    print(f"Cheapest pair: {cheapest} @ ${price:.4f}")
+
+    # 3. Check balance
+    bal = get_balance()
+    if not bal or not bal.get('Success'):
+        print("Balance check failed.")
+        exit(1)
+    spot = bal.get('SpotWallet', {})
+    usd_balance = float(spot.get('USD', {}).get('Free', 0))
+    print(f"USD balance: ${usd_balance:.2f}")
+
+    # 4. Buy 1 share
+    cost = price * 1
+    if usd_balance < cost:
+        print(f"Insufficient funds: need ${cost:.2f}, have ${usd_balance:.2f}")
         exit(1)
 
-    # Wait 1 minute
-    TIMEOUT = 60
-    start = time.time()
-    while time.time() - start < TIMEOUT:
-        remaining = int(TIMEOUT - (time.time() - start))
-        print(f"Waiting {remaining} seconds before fallback...")
-        time.sleep(10)
-
-    print("Timeout reached. Falling back to best performer.")
-    best = find_best_performer(pairs)
-    if best:
-        print(f"Best performer: {best}")
-        if execute_trade(best, shares=1):
-            print("Trade completed. Bot finished.")
-            exit(0)
-        else:
-            print("Best performer trade failed.")
-
-    print("Emergency fallback: buying first pair.")
-    first = pairs[0]
-    print(f"Attempting to buy {first} with quantity 1.")
-    if execute_trade(first, shares=1):
-        print("Trade completed. Bot finished.")
+    print(f"Attempting to buy 1 share of {cheapest} at ${price:.4f}...")
+    order_res = place_order_trial(cheapest, "BUY", 1)
+    if order_res:
+        print("Order successful!")
+        print("Response:", order_res)
     else:
-        print("All attempts failed. Check API keys and connection.")
+        print("All order attempts failed. Check API documentation.")
