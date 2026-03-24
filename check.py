@@ -75,31 +75,21 @@ def place_order(pair, side, quantity, price=None, order_type="MARKET"):
 
 def get_available_pairs():
     ex_info = get_ex_info()
-    print("DEBUG: ex_info type =", type(ex_info))
-    print("DEBUG: ex_info content =", str(ex_info)[:500])  # first 500 chars
-
     available_pairs = []
-    if isinstance(ex_info, dict):
-        print("DEBUG: ex_info keys =", ex_info.keys())
-        if 'symbols' in ex_info:
-            available_pairs = [s.get('symbol') for s in ex_info['symbols']]
+    
+    # Check if ex_info is dict and contains 'TradePairs'
+    if isinstance(ex_info, dict) and 'TradePairs' in ex_info:
+        # TradePairs is a dict where keys are the pair names (e.g., "ZEN/USD")
+        trade_pairs = ex_info['TradePairs']
+        if isinstance(trade_pairs, dict):
+            available_pairs = list(trade_pairs.keys())
+    # Fallback for other structures (if any)
+    elif isinstance(ex_info, dict) and 'symbols' in ex_info:
+        available_pairs = [s.get('symbol') for s in ex_info['symbols']]
     elif isinstance(ex_info, list):
-        print("DEBUG: ex_info is list, length =", len(ex_info))
-        if len(ex_info) > 0:
-            print("DEBUG: first element =", ex_info[0])
-        # Try to extract pairs – adjust based on what you see
-        for item in ex_info:
-            if isinstance(item, dict):
-                # Look for common keys: 'symbol', 'pair', 'name'
-                pair = item.get('symbol') or item.get('pair') or item.get('name')
-                if pair:
-                    available_pairs.append(pair)
-            elif isinstance(item, str):
-                available_pairs.append(item)
-    else:
-        print("DEBUG: unexpected format")
-
-    print("DEBUG: available_pairs =", available_pairs)
+        available_pairs = [item.get('symbol') for item in ex_info if 'symbol' in item]
+    
+    print(f"Found {len(available_pairs)} pairs: {available_pairs}")
     return available_pairs
 
 def get_historical_prices(pair):
