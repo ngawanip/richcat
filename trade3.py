@@ -53,17 +53,27 @@ def get_balance():
     return safe_json(r)
 
 def place_order(pair, side, quantity):
-    payload = {
-        "pair": pair,
-        "side": side,
-        "type": "MARKET",
-        "quantity": quantity,
-        "timestamp": int(time.time() * 1000),
-    }
-    headers = {"RST-API-KEY": API_KEY, "MSG-SIGNATURE": generate_signature(payload)}
-    r = requests.post(BASE_URL + "/v3/order", data=payload, headers=headers)
-    print(f"Order response: {r.status_code} {r.text[:200]}")
-    return safe_json(r)
+    # Try multiple endpoint variations
+    endpoints = ["/v3/order", "/v3/orders"]
+    payload_variants = [
+        {"pair": pair, "side": side, "type": "MARKET", "quantity": quantity},
+        {"symbol": pair, "side": side, "type": "MARKET", "quantity": quantity},
+    ]
+    for endpoint in endpoints:
+        for payload in payload_variants:
+            # Add timestamp and signature
+            payload["timestamp"] = int(time.time() * 1000)
+            headers = {"RST-API-KEY": API_KEY, "MSG-SIGNATURE": generate_signature(payload)}
+            url = BASE_URL + endpoint
+            print(f"Trying order: {url} with payload {payload}")
+            r = requests.post(url, data=payload, headers=headers)
+            print(f"  Status: {r.status_code} {r.text[:200]}")
+            if r.status_code == 200:
+                return safe_json(r)
+            # If 200, success
+            # If 404, try next
+            # If 400, maybe wrong format, but still try next
+    return None
 
 def get_available_pairs():
     ex_info = get_ex_info()
