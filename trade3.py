@@ -52,54 +52,28 @@ def get_balance():
     r = requests.get(BASE_URL + "/v3/balance", params=payload, headers=headers)
     return safe_json(r)
 
-def place_order_trial(pair, side, quantity):
-    """Try multiple endpoint and parameter combinations."""
-    # List of possible endpoints (relative to BASE_URL)
-    endpoints = [
-        "/v3/order",
-        "/v3/orders",
-        "/v3/order/place",
-        "/v3/trade",
-        "/v3/trade/place",
-        "/api/v3/order",
-        "/api/v3/orders",
-    ]
-    # Parameter sets (field names)
+def place_order_get(pair, side, quantity):
+    """Attempt to place order via GET with query parameters."""
+    endpoints = ["/v3/order", "/v3/orders"]
     param_sets = [
         {"pair": pair, "side": side, "type": "MARKET", "quantity": quantity},
         {"symbol": pair, "side": side, "type": "MARKET", "quantity": quantity},
-        {"market": pair, "side": side, "type": "MARKET", "amount": quantity},
-        {"pair": pair, "side": side, "orderType": "MARKET", "quantity": quantity},
-        {"symbol": pair, "side": side, "orderType": "MARKET", "quantity": quantity},
     ]
-    # Also try with pair without slash (e.g., ZENUSD)
+    # Also try without slash
     pair_no_slash = pair.replace('/', '')
-    param_sets_no_slash = [
+    param_sets.extend([
         {"pair": pair_no_slash, "side": side, "type": "MARKET", "quantity": quantity},
         {"symbol": pair_no_slash, "side": side, "type": "MARKET", "quantity": quantity},
-    ]
-    all_param_sets = param_sets + param_sets_no_slash
-
+    ])
     for endpoint in endpoints:
-        for params in all_param_sets:
-            # Add timestamp
+        for params in param_sets:
             payload = params.copy()
             payload["timestamp"] = int(time.time() * 1000)
-            headers = {"RST-API-KEY": API_KEY, "MSG-SIGNATURE": generate_signature(payload)}
             url = BASE_URL + endpoint
-            # Try POST with form-encoded data
+            headers = {"RST-API-KEY": API_KEY, "MSG-SIGNATURE": generate_signature(payload)}
+            print(f"Trying GET: {url} with params {payload}")
             try:
-                print(f"Trying: POST {url} with data {payload}")
-                r = requests.post(url, data=payload, headers=headers)
-                print(f"  Status: {r.status_code} {r.text[:200]}")
-                if r.status_code == 200:
-                    return safe_json(r)
-            except Exception as e:
-                print(f"  Exception: {e}")
-            # Also try POST with JSON body
-            try:
-                print(f"Trying: POST {url} with json {payload}")
-                r = requests.post(url, json=payload, headers=headers)
+                r = requests.get(url, params=payload, headers=headers)
                 print(f"  Status: {r.status_code} {r.text[:200]}")
                 if r.status_code == 200:
                     return safe_json(r)
@@ -126,7 +100,7 @@ def get_cheapest_pair(pairs):
     return cheapest, min_price
 
 if __name__ == '__main__':
-    print("Bot started – will buy 1 share of the cheapest pair immediately.")
+    print("Bot started – will buy 1 share of the cheapest pair immediately using GET.")
 
     # 1. Get all pairs
     ex_info = get_ex_info()
@@ -159,7 +133,7 @@ if __name__ == '__main__':
         exit(1)
 
     print(f"Attempting to buy 1 share of {cheapest} at ${price:.4f}...")
-    order_res = place_order_trial(cheapest, "BUY", 1)
+    order_res = place_order_get(cheapest, "BUY", 1)
     if order_res:
         print("Order successful!")
         print("Response:", order_res)
