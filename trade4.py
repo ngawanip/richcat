@@ -62,15 +62,17 @@ def get_balance():
 
 def get_klines(pair, interval="1d", limit=30):
     try:
-        # Added timestamp to payload
+        # Format the pair to remove the slash (e.g., "ZEN/USD" -> "ZENUSD")
+        formatted_pair = pair.replace('/', '')
+        
+        # Changed "pair" to "symbol" in the payload, which is standard for klines
         payload = {
-            "pair": pair, 
+            "symbol": formatted_pair, 
             "interval": interval, 
             "limit": limit,
             "timestamp": int(time.time()) * 1000
         }
         
-        # Added the signature and auth headers used in your other functions
         headers = {
             "RST-API-KEY": API_KEY,
             "MSG-SIGNATURE": generate_signature(payload)
