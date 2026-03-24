@@ -191,8 +191,6 @@ if __name__ == '__main__':
     TIMEOUT_SECONDS = 300  # 5 minutes
 
     print(f"Bot started. Goal: {MAX_TRADES} trades.")
-    print("Step 1: Try to find a pair meeting original condition (price >= 1.25*low).")
-    print("If none found within 5 minutes, will buy best performing pair and then continue.\n")
 
     while trades_done < MAX_TRADES:
         # Get current pairs list
