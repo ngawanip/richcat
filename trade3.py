@@ -42,7 +42,11 @@ def get_ticker(pair):
     if r.status_code != 200:
         print(f"  ❌ Ticker error for {pair}: {r.status_code} {r.text[:100]}")
         return None
-    return safe_json(r)
+    data = safe_json(r)
+    # The structure: {"Success":true, "Data": { pair : { "LastPrice": ..., "Change": ... } } }
+    if data and data.get('Success') and 'Data' in data and pair in data['Data']:
+        return data['Data'][pair]
+    return None
 
 def get_balance():
     payload = {"timestamp": int(time.time() * 1000)}
@@ -76,12 +80,13 @@ def execute_trade(pair, shares=1):
     """Buy a specific pair with given shares. Returns True if successful."""
     ticker = get_ticker(pair)
     if not ticker:
-        print(f"  ❌ Cannot get price for {pair}")
+        print(f"  ❌ Cannot get ticker data for {pair}")
         return False
-    price = float(ticker.get('price', ticker.get('lastPrice', 0)))
-    if price == 0:
-        print(f"  ❌ Invalid price for {pair}")
+    price = ticker.get('LastPrice')
+    if price is None:
+        print(f"  ❌ No price found in ticker data: {ticker}")
         return False
+    price = float(price)
 
     # Check balance
     bal = get_balance()
@@ -112,49 +117,38 @@ def execute_trade(pair, shares=1):
             return False
     else:
         print(f"  ❌ Insufficient funds: need ${cost:.2f}, have ${usd_balance:.2f}")
-        return False
-
-# ---------- Strategy ----------
-def find_suitable_pair(pairs):
-    """Find first pair where price >= 1.25 * today's low."""
-    for pair in pairs:
-        ticker = get_ticker(pair)
-        if not ticker:
-            continue
-        price = float(ticker.get('price', ticker.get('lastPrice', 0)))
-        low = ticker.get('lowPrice') or ticker.get('low') or ticker.get('minPrice')
-        if low is None:
-            continue
-        low = float(low)
-        if price >= low * 1.25:
-            print(f"🎯 Suitable pair found: {pair} (price {price:.2f} >= {low:.2f}*1.25)")
-            return pair
-    return None
+        # Try buying a smaller quantity if possible
+        max_shares = int(usd_balance // price)
+        if max_shares > 0:
+            print(f"  Trying to buy {max_shares} share(s) instead.")
+            return execute_trade(pair, max_shares)
+        else:
+            return False
 
 def find_best_performer(pairs):
-    """Find pair with highest 24h price change."""
+    """Find pair with highest 24h price change (Change field)."""
     best_pair = None
     best_change = -float('inf')
     for pair in pairs:
         ticker = get_ticker(pair)
         if not ticker:
             continue
-        change = ticker.get('priceChangePercent')
+        change = ticker.get('Change')
         if change is not None:
             try:
                 change = float(change)
                 if change > best_change:
                     best_change = change
                     best_pair = pair
-                    print(f"  🏆 New best: {pair} ({change:.2f}%)")
+                    print(f"  🏆 New best: {pair} ({change*100:.2f}%)")
             except:
                 pass
-        time.sleep(0.2)  # avoid rate limits
+        time.sleep(0.2)
     return best_pair
 
 # ---------- Main ----------
 if __name__ == '__main__':
-    print("\n🚀 Starting bot – will buy 1 share within 2 minutes.\n")
+    print("\n🚀 Starting bot – will buy 1 share within 1 minute.\n")
 
     # 1. Get all pairs
     pairs = get_available_pairs()
@@ -163,28 +157,17 @@ if __name__ == '__main__':
         exit(1)
 
     start_time = time.time()
-    TIMEOUT = 120  # seconds
+    TIMEOUT = 60  # seconds
 
-    # 2. Try to find a suitable pair
-    suitable = None
+    # 2. Wait up to 1 minute, then fallback to best performer
     while time.time() - start_time < TIMEOUT:
-        suitable = find_suitable_pair(pairs)
-        if suitable:
-            break
-        print("⏳ No suitable pair yet, waiting 10 seconds...")
+        # We can optionally look for a suitable pair, but with no low price we skip.
+        # Instead, we just wait and then do fallback.
+        print(f"⏳ Waiting for fallback ({int(TIMEOUT - (time.time()-start_time))}s left)...")
         time.sleep(10)
 
-    # 3. If found, buy it
-    if suitable:
-        print(f"\n✅ Suitable pair found! Buying 1 share of {suitable}")
-        if execute_trade(suitable, shares=1):
-            print("\n🎉 Bot finished – trade completed.")
-            exit(0)
-        else:
-            print("\n⚠️ Trade failed, falling back to best performer.")
-
-    # 4. Fallback: best performer
-    print("\n⏰ Timeout reached or no suitable pair. Falling back to best performer.")
+    # 3. Fallback: best performer
+    print("\n⏰ Timeout reached. Falling back to best performer (highest 24h change).")
     best = find_best_performer(pairs)
     if best:
         print(f"🏆 Best performer: {best}")
@@ -194,9 +177,10 @@ if __name__ == '__main__':
         else:
             print("⚠️ Best performer trade failed.")
 
-    # 5. Emergency: first pair
+    # 4. Emergency: first pair
     print("\n🔥 Emergency fallback: buying first available pair.")
     first = pairs[0]
+    print(f"📡 Attempting to buy {first} with quantity 1.")
     if execute_trade(first, shares=1):
         print("\n🎉 Bot finished – trade completed.")
     else:
