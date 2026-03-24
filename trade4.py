@@ -79,7 +79,7 @@ def get_klines(pair, interval="1d", limit=30):
         }
         
         # Sent request with headers
-        r = requests.get(BASE_URL + "/v3/klines", params=payload, headers=headers, timeout=5)
+        r = requests.get(BASE_URL + "/v3/kline", params=payload, headers=headers, timeout=5)
         
         # Debugging print to see the exact error text if it fails
         if r.status_code != 200:
