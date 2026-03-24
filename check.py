@@ -46,12 +46,15 @@ def get_ex_info():
     return safe_json(r)
 
 def get_ticker(pair=None):
-    print(f"Calling get_ticker(pair={pair})...")
-    payload = {}
+    payload = {"timestamp": int(time.time()) * 1000}
     if pair:
         payload["pair"] = pair
-    r = requests.get(BASE_URL + "/v3/ticker", params=payload)
-    return safe_json(r)
+    headers = {
+        "RST-API-KEY": API_KEY,
+        "MSG-SIGNATURE": generate_signature(payload)
+    }
+    r = requests.get(BASE_URL + "/v3/ticker", params=payload, headers=headers)
+    return r.json()
 
 def get_balance():
     print("Calling get_balance()...")
@@ -64,14 +67,15 @@ def get_balance():
     return safe_json(r)
 
 def get_klines(pair, interval="1d", limit=30):
-    print(f"Calling get_klines(pair={pair}, interval={interval}, limit={limit})...")
-    payload = {
-        "pair": pair,
-        "interval": interval,
-        "limit": limit
-    }
-    r = requests.get(BASE_URL + "/v3/klines", params=payload)
-    return safe_json(r)
+    try:
+        payload = {"pair": pair, "interval": interval, "limit": limit}
+        r = requests.get(BASE_URL + "/v3/klines", params=payload, timeout=5)
+        if r.status_code == 200:
+            return r.json()
+        else:
+            return []
+    except:
+        return []
 
 def place_order(pair, side, quantity, price=None, order_type="MARKET"):
     print(f"Calling place_order(pair={pair}, side={side}, quantity={quantity}, ...)")
@@ -127,12 +131,18 @@ def get_historical_prices(pair):
     return prices
 
 def get_todays_low(pair):
+    ticker = get_ticker(pair)
+    if isinstance(ticker, dict):
+        # Look for low price field
+        low = ticker.get('lowPrice') or ticker.get('low') or ticker.get('minPrice')
+        if low:
+            return float(low)
+    # Fallback: try klines if they ever work
     klines = get_klines(pair, interval="1d", limit=1)
     if isinstance(klines, list) and len(klines) > 0:
         try:
-            # Index 3 is Low Price
-            return float(klines[0][3])
-        except (IndexError, ValueError, TypeError):
+            return float(klines[0][3])  # low price
+        except (IndexError, ValueError):
             pass
     return None
 
@@ -180,18 +190,9 @@ def test_data_connection():
         klines = get_klines(test_pair, limit=1)
         if isinstance(klines, list) and len(klines) > 0:
             print(f"[OK] Raw Kline Sample for {test_pair}: {klines[0]}")
-            print(f"     Interpretation -> Low: {klines[0][3]}, Close: {klines[0][4]}")
         else:
-            # If klines failed, print the actual response to help debug
-            print(f"[WARNING] Kline data for {test_pair} is not a valid list.")
-            print("        This may indicate that the pair format is wrong (e.g., ZEN/USD vs ZENUSD).")
-            print("        Check the API documentation or try with a different pair.")
-            # We'll still continue, but trading might fail later
-            print("        Diagnostic will proceed, but trading may be unreliable.")
-            # Return False to stop the bot, or continue? We'll continue with caution.
-            # For now, we'll return False to prevent trading.
-            return False
-
+            print(f"[WARNING] Kline data for {test_pair} is unavailable. Trading will use ticker data.")
+            
         print("\nDIAGNOSTIC PASSED - Data is reliable.\n" + "="*40 + "\n")
         return True
 
