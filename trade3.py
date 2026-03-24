@@ -5,7 +5,6 @@ import requests
 import hashlib
 import hmac
 import time
-import statistics
 import json
 from dotenv import load_dotenv
 import os
@@ -16,10 +15,9 @@ API_KEY = os.getenv("API_KEY")
 SECRET = os.getenv("SECRET")
 BASE_URL = os.getenv("BASE_URL")
 
-print(f"Loaded API_KEY: {API_KEY[:5]}...  BASE_URL: {BASE_URL}")
+print(f"✅ Loaded API_KEY: {API_KEY[:5]}...  BASE_URL: {BASE_URL}")
 
-# --- API Core ---
-
+# ---------- API Helpers ----------
 def generate_signature(params):
     query_string = '&'.join(["{}={}".format(k, params[k]) for k in sorted(params.keys())])
     us = SECRET.encode('utf-8')
@@ -30,7 +28,7 @@ def safe_json(r):
     try:
         return r.json()
     except json.JSONDecodeError:
-        print(f"JSON decode error. Status: {r.status_code}, Text: {r.text[:200]}")
+        print(f"⚠️ JSON decode error. Status: {r.status_code}, Text: {r.text[:200]}")
         return None
 
 def get_ex_info():
@@ -38,16 +36,16 @@ def get_ex_info():
     return safe_json(r)
 
 def get_ticker(pair):
-    payload = {"timestamp": int(time.time()) * 1000, "pair": pair}
+    payload = {"timestamp": int(time.time() * 1000), "pair": pair}
     headers = {"RST-API-KEY": API_KEY, "MSG-SIGNATURE": generate_signature(payload)}
     r = requests.get(BASE_URL + "/v3/ticker", params=payload, headers=headers)
     if r.status_code != 200:
-        print(f"  Ticker error for {pair}: {r.status_code} {r.text[:100]}")
+        print(f"  ❌ Ticker error for {pair}: {r.status_code} {r.text[:100]}")
         return None
     return safe_json(r)
 
 def get_balance():
-    payload = {"timestamp": int(time.time()) * 1000}
+    payload = {"timestamp": int(time.time() * 1000)}
     headers = {"RST-API-KEY": API_KEY, "MSG-SIGNATURE": generate_signature(payload)}
     r = requests.get(BASE_URL + "/v3/balance", params=payload, headers=headers)
     return safe_json(r)
@@ -58,86 +56,34 @@ def place_order(pair, side, quantity):
         "side": side,
         "type": "MARKET",
         "quantity": quantity,
-        "timestamp": int(time.time()) * 1000,
+        "timestamp": int(time.time() * 1000),
     }
     headers = {"RST-API-KEY": API_KEY, "MSG-SIGNATURE": generate_signature(payload)}
     r = requests.post(BASE_URL + "/v3/order", data=payload, headers=headers)
-    print(f"Order response: {r.status_code} {r.text[:200]}")
+    print(f"  📡 Order response: {r.status_code} {r.text[:200]}")
     return safe_json(r)
 
 def get_available_pairs():
     ex_info = get_ex_info()
     if isinstance(ex_info, dict) and 'TradePairs' in ex_info:
-        return list(ex_info['TradePairs'].keys())
+        pairs = list(ex_info['TradePairs'].keys())
+        print(f"📊 Found {len(pairs)} trading pairs.")
+        return pairs
+    print("❌ No TradePairs found in exchange info.")
     return []
-
-def get_historical_prices(pair):
-    # We know klines endpoint returns 404, but we keep it for compatibility.
-    # It will always return empty list.
-    return []
-
-def calculate_stock_statistics(prices):
-    if not prices or len(prices) < 2:
-        return None, None
-    return statistics.mean(prices), statistics.stdev(prices)
-
-def get_todays_low(pair):
-    ticker = get_ticker(pair)
-    if isinstance(ticker, dict):
-        low = ticker.get('lowPrice') or ticker.get('low') or ticker.get('minPrice')
-        if low:
-            return float(low)
-    return None
-
-def compute_performance_score(ticker):
-    """Score based on 24h price change (higher = better)."""
-    if not isinstance(ticker, dict):
-        return -float('inf')
-    change = ticker.get('priceChangePercent')
-    if change is not None:
-        try:
-            return float(change)
-        except:
-            pass
-    # Fallback: (current - low) / low
-    price = ticker.get('price') or ticker.get('lastPrice')
-    low = ticker.get('lowPrice') or ticker.get('low')
-    if price and low:
-        try:
-            p = float(price)
-            l = float(low)
-            if l > 0:
-                return (p - l) / l
-        except:
-            pass
-    return -float('inf')
-
-def find_best_performing_pair(pairs):
-    """Find pair with highest 24h price change (or fallback score)."""
-    best_pair = None
-    best_score = -float('inf')
-    for pair in pairs:
-        ticker = get_ticker(pair)
-        if ticker:
-            score = compute_performance_score(ticker)
-            if score > best_score:
-                best_score = score
-                best_pair = pair
-        time.sleep(0.1)  # be gentle
-    return best_pair, best_score
-
-# --- Main Logic ---
 
 def execute_trade(pair, shares=1):
+    """Buy a specific pair with given shares. Returns True if successful."""
     ticker = get_ticker(pair)
     if not ticker:
-        print(f"Cannot get price for {pair}")
+        print(f"  ❌ Cannot get price for {pair}")
         return False
     price = float(ticker.get('price', ticker.get('lastPrice', 0)))
     if price == 0:
-        print(f"Invalid price for {pair}")
+        print(f"  ❌ Invalid price for {pair}")
         return False
 
+    # Check balance
     bal = get_balance()
     usd_balance = 0.0
     if isinstance(bal, list):
@@ -150,87 +96,108 @@ def execute_trade(pair, shares=1):
             if asset.get('asset') == 'USD':
                 usd_balance = float(asset.get('free', 0))
                 break
+    else:
+        print(f"  ❌ Unexpected balance format: {bal}")
+        return False
 
     cost = shares * price
     if usd_balance >= cost:
-        print(f"Buying {shares} share(s) of {pair} at ${price:.4f} (cost ${cost:.2f})")
-        result = place_order(pair, "BUY", shares)
-        if result:
-            print("✅ Trade successful!")
+        print(f"💰 Buying {shares} share(s) of {pair} @ ${price:.4f} (cost ${cost:.2f})")
+        order_res = place_order(pair, "BUY", shares)
+        if order_res:
+            print("✅ TRADE SUCCESSFUL!")
             return True
         else:
             print("❌ Order failed.")
+            return False
     else:
-        print(f"Insufficient funds: need ${cost:.2f}, have ${usd_balance:.2f}")
-    return False
+        print(f"  ❌ Insufficient funds: need ${cost:.2f}, have ${usd_balance:.2f}")
+        return False
 
+# ---------- Strategy ----------
 def find_suitable_pair(pairs):
-    """Search for a pair meeting the original condition (risk <=2 and price >= 1.25*low)."""
+    """Find first pair where price >= 1.25 * today's low."""
     for pair in pairs:
-        # Get historical prices (always empty, so risk condition will be None -> not suitable)
-        # So we skip risk check because klines unavailable. We'll use the price condition only.
-        # To make it work, we'll rely on the fallback anyway.
-        # But we'll implement a condition using the ticker low.
-        low = get_todays_low(pair)
-        if low is None:
-            continue
         ticker = get_ticker(pair)
         if not ticker:
             continue
         price = float(ticker.get('price', ticker.get('lastPrice', 0)))
+        low = ticker.get('lowPrice') or ticker.get('low') or ticker.get('minPrice')
+        if low is None:
+            continue
+        low = float(low)
         if price >= low * 1.25:
-            print(f"Suitable pair found: {pair} (price {price:.2f} >= {low:.2f}*1.25)")
+            print(f"🎯 Suitable pair found: {pair} (price {price:.2f} >= {low:.2f}*1.25)")
             return pair
     return None
 
+def find_best_performer(pairs):
+    """Find pair with highest 24h price change."""
+    best_pair = None
+    best_change = -float('inf')
+    for pair in pairs:
+        ticker = get_ticker(pair)
+        if not ticker:
+            continue
+        change = ticker.get('priceChangePercent')
+        if change is not None:
+            try:
+                change = float(change)
+                if change > best_change:
+                    best_change = change
+                    best_pair = pair
+                    print(f"  🏆 New best: {pair} ({change:.2f}%)")
+            except:
+                pass
+        time.sleep(0.2)  # avoid rate limits
+    return best_pair
+
+# ---------- Main ----------
 if __name__ == '__main__':
-    MAX_TRADES = 5
-    trades_done = 0
-    fallback_executed = False
+    print("\n🚀 Starting bot – will buy 1 share within 2 minutes.\n")
+
+    # 1. Get all pairs
+    pairs = get_available_pairs()
+    if not pairs:
+        print("❌ No pairs. Exiting.")
+        exit(1)
+
     start_time = time.time()
-    TIMEOUT_SECONDS = 300  # 5 minutes
+    TIMEOUT = 120  # seconds
 
-    print(f"Bot started. Goal: {MAX_TRADES} trades.")
-
-    while trades_done < MAX_TRADES:
-        # Get current pairs list
-        pairs = get_available_pairs()
-        if not pairs:
-            print("No pairs found, waiting...")
-            time.sleep(10)
-            continue
-
-        # If we haven't used fallback yet and we've been searching for more than timeout,
-        # do fallback trade.
-        if not fallback_executed and (time.time() - start_time) > TIMEOUT_SECONDS:
-            print(f"\n⏰ Timeout ({TIMEOUT_SECONDS}s) reached. No suitable pair found.")
-            print("Falling back to buy best performing pair (highest 24h change).")
-            best_pair, best_score = find_best_performing_pair(pairs)
-            if best_pair:
-                if execute_trade(best_pair, shares=1):
-                    trades_done += 1
-                    fallback_executed = True
-                    print(f"Fallback trade completed. Trades so far: {trades_done}/{MAX_TRADES}")
-                else:
-                    print("Fallback trade failed. Will retry.")
-            else:
-                print("No valid pair for fallback. Retrying.")
-            continue
-
-        # Normal strategy: find a suitable pair
+    # 2. Try to find a suitable pair
+    suitable = None
+    while time.time() - start_time < TIMEOUT:
         suitable = find_suitable_pair(pairs)
         if suitable:
-            print(f"Found suitable pair: {suitable}")
-            if execute_trade(suitable, shares=1):
-                trades_done += 1
-                print(f"Trade successful. Trades so far: {trades_done}/{MAX_TRADES}")
-            else:
-                print("Trade failed. Retrying...")
+            break
+        print("⏳ No suitable pair yet, waiting 10 seconds...")
+        time.sleep(10)
+
+    # 3. If found, buy it
+    if suitable:
+        print(f"\n✅ Suitable pair found! Buying 1 share of {suitable}")
+        if execute_trade(suitable, shares=1):
+            print("\n🎉 Bot finished – trade completed.")
+            exit(0)
         else:
-            print("No suitable pair found this cycle. Retrying...")
+            print("\n⚠️ Trade failed, falling back to best performer.")
 
-        # Wait before next cycle
-        if trades_done < MAX_TRADES:
-            time.sleep(15)
+    # 4. Fallback: best performer
+    print("\n⏰ Timeout reached or no suitable pair. Falling back to best performer.")
+    best = find_best_performer(pairs)
+    if best:
+        print(f"🏆 Best performer: {best}")
+        if execute_trade(best, shares=1):
+            print("\n🎉 Bot finished – trade completed.")
+            exit(0)
+        else:
+            print("⚠️ Best performer trade failed.")
 
-    print("\n🎉 Target reached. Bot finished.")
+    # 5. Emergency: first pair
+    print("\n🔥 Emergency fallback: buying first available pair.")
+    first = pairs[0]
+    if execute_trade(first, shares=1):
+        print("\n🎉 Bot finished – trade completed.")
+    else:
+        print("\n❌ All attempts failed. Check API keys and connection.")
